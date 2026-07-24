@@ -1,0 +1,8 @@
+__pycache__/
+*.py[cod]
+*.out
+.venv/
+venv/
+*.pt
+.DS_Store
+train.sh
