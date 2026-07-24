@@ -1,0 +1,10 @@
+Traceback (most recent call last):
+  File "/home/akaur64/train_SAE/train_sae.py", line 301, in <module>
+    main()
+  File "/home/akaur64/train_SAE/train_sae.py", line 262, in main
+    train_stats = train_one_epoch(sae, train_loader, opt, cfg, device)
+                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/akaur64/train_SAE/train_sae.py", line 161, in train_one_epoch
+    totals["ev_mean"] += explained_variance(x, recon).mean().item()
+    ~~~~~~^^^^^^^^^^^
+KeyError: 'ev_mean'

@@ -1,3 +1,9 @@
+# Local-only (keep on this machine, not on GitHub / other server)
+view_sae.py
+plot_sae.py
+trainer.sh
+
+# Runtime / outputs
 __pycache__/
 *.py[cod]
 *.out

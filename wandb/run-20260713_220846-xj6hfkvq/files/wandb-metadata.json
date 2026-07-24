@@ -1,0 +1,24 @@
+{
+  "os": "Linux-4.18.0-553.124.1.el8_10.x86_64-x86_64-with-glibc2.28",
+  "python": "CPython 3.12.13",
+  "startedAt": "2026-07-14T05:08:46.074413Z",
+  "program": "/home/akaur64/train_SAE/train_sae.py",
+  "codePath": "train_sae.py",
+  "codePathLocal": "train_sae.py",
+  "email": "akaur64@asu.edu",
+  "root": "/home/akaur64/train_SAE",
+  "host": "sol-login04",
+  "executable": "/home/akaur64/mambaenvs/py312/bin/python",
+  "cpu_count": 8,
+  "cpu_count_logical": 8,
+  "disk": {
+    "/": {
+      "total": "137369751552",
+      "used": "57288818688"
+    }
+  },
+  "memory": {
+    "total": "33700929536"
+  },
+  "writerId": "7vx69ew96cq0vbpgetbb53ze7ngzppg1"
+}

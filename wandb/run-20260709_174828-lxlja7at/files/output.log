@@ -1,0 +1,40 @@
+epoch=000 train_loss=0.026411 val_loss=0.012212 val_cos=0.9509 val_ev_mean=-1.1492 val_ev_std=0.7999 val_l0=528.2 val_dead_frac=0.4889
+Saved SAE to /scratch/akaur64/olmo-embeddings/galileo_tiny/m_eurosat/prisma_sae.pt
+epoch=001 train_loss=0.008667 val_loss=0.006823 val_cos=0.9673 val_ev_mean=-0.0695 val_ev_std=0.2975 val_l0=395.1 val_dead_frac=0.5879
+Saved SAE to /scratch/akaur64/olmo-embeddings/galileo_tiny/m_eurosat/prisma_sae.pt
+epoch=002 train_loss=0.006287 val_loss=0.005392 val_cos=0.9743 val_ev_mean=0.2751 val_ev_std=0.2078 val_l0=353.7 val_dead_frac=0.6283
+Saved SAE to /scratch/akaur64/olmo-embeddings/galileo_tiny/m_eurosat/prisma_sae.pt
+epoch=003 train_loss=0.004805 val_loss=0.004421 val_cos=0.9830 val_ev_mean=0.5287 val_ev_std=0.1443 val_l0=343.4 val_dead_frac=0.6426
+Saved SAE to /scratch/akaur64/olmo-embeddings/galileo_tiny/m_eurosat/prisma_sae.pt
+epoch=004 train_loss=0.004160 val_loss=0.003842 val_cos=0.9866 val_ev_mean=0.6256 val_ev_std=0.1231 val_l0=327.2 val_dead_frac=0.6497
+Saved SAE to /scratch/akaur64/olmo-embeddings/galileo_tiny/m_eurosat/prisma_sae.pt
+epoch=005 train_loss=0.003672 val_loss=0.003502 val_cos=0.9887 val_ev_mean=0.6733 val_ev_std=0.1184 val_l0=316.1 val_dead_frac=0.6510
+Saved SAE to /scratch/akaur64/olmo-embeddings/galileo_tiny/m_eurosat/prisma_sae.pt
+epoch=006 train_loss=0.003374 val_loss=0.003229 val_cos=0.9904 val_ev_mean=0.7323 val_ev_std=0.1027 val_l0=310.8 val_dead_frac=0.6543
+Saved SAE to /scratch/akaur64/olmo-embeddings/galileo_tiny/m_eurosat/prisma_sae.pt
+epoch=007 train_loss=0.003142 val_loss=0.003036 val_cos=0.9915 val_ev_mean=0.7599 val_ev_std=0.0951 val_l0=303.4 val_dead_frac=0.6562
+Saved SAE to /scratch/akaur64/olmo-embeddings/galileo_tiny/m_eurosat/prisma_sae.pt
+epoch=008 train_loss=0.002965 val_loss=0.002874 val_cos=0.9923 val_ev_mean=0.7802 val_ev_std=0.0898 val_l0=298.4 val_dead_frac=0.6595
+Saved SAE to /scratch/akaur64/olmo-embeddings/galileo_tiny/m_eurosat/prisma_sae.pt
+epoch=009 train_loss=0.002816 val_loss=0.002739 val_cos=0.9929 val_ev_mean=0.7984 val_ev_std=0.0842 val_l0=294.2 val_dead_frac=0.6621
+Saved SAE to /scratch/akaur64/olmo-embeddings/galileo_tiny/m_eurosat/prisma_sae.pt
+epoch=010 train_loss=0.002688 val_loss=0.002619 val_cos=0.9935 val_ev_mean=0.8137 val_ev_std=0.0792 val_l0=290.7 val_dead_frac=0.6634
+Saved SAE to /scratch/akaur64/olmo-embeddings/galileo_tiny/m_eurosat/prisma_sae.pt
+epoch=011 train_loss=0.002573 val_loss=0.002514 val_cos=0.9939 val_ev_mean=0.8240 val_ev_std=0.0762 val_l0=286.1 val_dead_frac=0.6641
+Saved SAE to /scratch/akaur64/olmo-embeddings/galileo_tiny/m_eurosat/prisma_sae.pt
+epoch=012 train_loss=0.002474 val_loss=0.002419 val_cos=0.9942 val_ev_mean=0.8349 val_ev_std=0.0722 val_l0=281.4 val_dead_frac=0.6654
+Saved SAE to /scratch/akaur64/olmo-embeddings/galileo_tiny/m_eurosat/prisma_sae.pt
+epoch=013 train_loss=0.002382 val_loss=0.002332 val_cos=0.9945 val_ev_mean=0.8439 val_ev_std=0.0689 val_l0=277.0 val_dead_frac=0.6641
+Saved SAE to /scratch/akaur64/olmo-embeddings/galileo_tiny/m_eurosat/prisma_sae.pt
+epoch=014 train_loss=0.002296 val_loss=0.002252 val_cos=0.9948 val_ev_mean=0.8512 val_ev_std=0.0663 val_l0=272.7 val_dead_frac=0.6641
+Saved SAE to /scratch/akaur64/olmo-embeddings/galileo_tiny/m_eurosat/prisma_sae.pt
+epoch=015 train_loss=0.002218 val_loss=0.002177 val_cos=0.9951 val_ev_mean=0.8586 val_ev_std=0.0637 val_l0=269.1 val_dead_frac=0.6667
+Saved SAE to /scratch/akaur64/olmo-embeddings/galileo_tiny/m_eurosat/prisma_sae.pt
+epoch=016 train_loss=0.002146 val_loss=0.002108 val_cos=0.9953 val_ev_mean=0.8642 val_ev_std=0.0612 val_l0=264.5 val_dead_frac=0.6686
+Saved SAE to /scratch/akaur64/olmo-embeddings/galileo_tiny/m_eurosat/prisma_sae.pt
+epoch=017 train_loss=0.002080 val_loss=0.002044 val_cos=0.9954 val_ev_mean=0.8695 val_ev_std=0.0592 val_l0=259.6 val_dead_frac=0.6693
+Saved SAE to /scratch/akaur64/olmo-embeddings/galileo_tiny/m_eurosat/prisma_sae.pt
+epoch=018 train_loss=0.002016 val_loss=0.001984 val_cos=0.9956 val_ev_mean=0.8742 val_ev_std=0.0575 val_l0=254.8 val_dead_frac=0.6712
+Saved SAE to /scratch/akaur64/olmo-embeddings/galileo_tiny/m_eurosat/prisma_sae.pt
+epoch=019 train_loss=0.001956 val_loss=0.001927 val_cos=0.9957 val_ev_mean=0.8779 val_ev_std=0.0556 val_l0=250.2 val_dead_frac=0.6719
+Saved SAE to /scratch/akaur64/olmo-embeddings/galileo_tiny/m_eurosat/prisma_sae.pt

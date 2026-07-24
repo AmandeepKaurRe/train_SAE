@@ -1,0 +1,73 @@
+{
+  "os": "Linux-4.18.0-553.124.1.el8_10.x86_64-x86_64-with-glibc2.28",
+  "python": "CPython 3.12.13",
+  "startedAt": "2026-07-14T06:06:02.683201Z",
+  "program": "/home/akaur64/train_SAE/train_sae.py",
+  "codePath": "train_sae.py",
+  "codePathLocal": "train_sae.py",
+  "email": "akaur64@asu.edu",
+  "root": "/home/akaur64/train_SAE",
+  "host": "sg039",
+  "executable": "/home/akaur64/mambaenvs/py312/bin/python",
+  "cpu_count": 48,
+  "cpu_count_logical": 48,
+  "gpu": "NVIDIA A100-SXM4-80GB",
+  "gpu_count": 1,
+  "disk": {
+    "/": {
+      "total": "119830216704",
+      "used": "21154508800"
+    }
+  },
+  "memory": {
+    "total": "540626980864"
+  },
+  "gpu_nvidia": [
+    {
+      "name": "NVIDIA A100-SXM4-80GB",
+      "memoryTotal": "85899345920",
+      "cudaCores": 6912,
+      "architecture": "Ampere",
+      "uuid": "GPU-4cc7fea5-a1b0-64b5-6dfa-01c647f0b33c"
+    }
+  ],
+  "cudaVersion": "13.2",
+  "slurm": {
+    "cluster_name": "sol",
+    "conf": "/var/spool/slurmd/conf-cache/slurm.conf",
+    "cpus_on_node": "1",
+    "gpus_on_node": "1",
+    "gtids": "0",
+    "job_account": "grp_hkerner",
+    "job_cpus_per_node": "1",
+    "job_end_time": "1784027132",
+    "job_gid": "99999810",
+    "job_gpus": "1",
+    "job_id": "58995638",
+    "job_name": "train-galsae",
+    "job_nodelist": "sg039",
+    "job_num_nodes": "1",
+    "job_partition": "public",
+    "job_qos": "public",
+    "job_start_time": "1784009132",
+    "job_uid": "3118458",
+    "job_user": "akaur64",
+    "jobid": "58995638",
+    "localid": "0",
+    "mem_per_node": "24000",
+    "nnodes": "1",
+    "nodeid": "0",
+    "nodelist": "sg039",
+    "oom_kill_step": "0",
+    "prio_process": "0",
+    "procid": "0",
+    "script_context": "prolog_task",
+    "submit_dir": "/home/akaur64/train_SAE",
+    "submit_host": "sol-login04",
+    "task_pid": "3673137",
+    "tasks_per_node": "1",
+    "topology_addr": "sg039",
+    "topology_addr_pattern": "node"
+  },
+  "writerId": "baa2eoglzli1dvh3w6vv58ig45u93eaq"
+}
