@@ -2,6 +2,7 @@
 view_sae.py
 plot_sae.py
 trainer.sh
+train.sh
 
 # Runtime / outputs
 __pycache__/
@@ -9,6 +10,12 @@ __pycache__/
 *.out
 .venv/
 venv/
+logs/
+out_features*/
+Eurosat_images/
+wandb/
+*.png
 *.pt
+*.pth
+.env
 .DS_Store
-train.sh
