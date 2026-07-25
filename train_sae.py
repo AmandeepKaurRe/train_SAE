@@ -244,7 +244,7 @@ def main() -> None:
     val_embeddings = []
     test_embeddings = []
     for dataset in DATASETS:
-        base_path = f"{ROOT}/{MODEL}/{dataset}"
+        base_path = f"{args.root}/{MODEL}/{dataset}"
         test_embed = load_embeddings(f"{base_path}/valid.pt", False)
         if args.seg:
             if len(test_embed.shape)<=2:
@@ -254,6 +254,7 @@ def main() -> None:
                 continue
         train_embeddings.append(load_embeddings(f"{base_path}/train.pt", args.seg))
         val_embeddings.append(load_embeddings(f"{base_path}/valid.pt", args.seg))
+        # break
         # test_embeddings.append(load_embeddings(f"{base_path}/test.pt", args.seg))
 
     train_embeddings = torch.cat(train_embeddings, dim=0)
@@ -271,8 +272,8 @@ def main() -> None:
     del val_embeddings
     # test_dataset = EmbeddingDataset(test_embeddings)
 
-    train_loader = DataLoader(train_loader, batch_size=args.batch_size, shuffle=True, drop_last=True)
-    val_loader = DataLoader(val_loader, batch_size=args.batch_size, shuffle=False, drop_last=False)
+    train_loader = DataLoader(train_loader, batch_size=args.batch_size, num_workers=8, shuffle=True, drop_last=True, pin_memory=True)
+    val_loader = DataLoader(val_loader, batch_size=args.batch_size, num_workers=8, shuffle=False, drop_last=False, pin_memory=True)
     # test_loader = DataLoader(test_dataset, batch_size=args.batch_size, shuffle=False, drop_last=False)
 
     cfg = build_config(
@@ -299,7 +300,7 @@ def main() -> None:
     )
     print("Our hyperparameters:")
     hyperparams = {
-        "root": ROOT,
+        "root": args.root,
         "model": MODEL,
         "datasets": DATASETS,
         "device": str(device),
