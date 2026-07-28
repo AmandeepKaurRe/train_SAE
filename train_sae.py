@@ -271,7 +271,7 @@ def main() -> None:
     parser.add_argument("--wandb-entity", default='akaur64-arizona-state-university')
     parser.add_argument("--no-wandb", action="store_true")
     parser.add_argument("--seg", action="store_true")
-    parser.add_argument("--use-memmap", type=str, default=False)
+    parser.add_argument("--use-memmap", action="store_true")
     parser.add_argument(
         "--progress",
         action="store_true",
@@ -430,7 +430,7 @@ def main() -> None:
         "wandb_entity": cfg.wandb_entity,
         "n_train": N_TRAIN,
         "n_val": N_VAL,
-        "use_memmap": use_memmap,
+        "use_memmap": args.use_memmap,
         "num_workers": loader_workers,
         "steps_per_epoch": len(train_loader),
         "total_train_steps": len(train_loader) * cfg.num_epochs,
@@ -455,7 +455,7 @@ def main() -> None:
 
     best_val = math.inf
     for epoch in range(cfg.num_epochs):
-        if use_memmap:
+        if args.use_memmap:
             train_loader.dataset.set_epoch(epoch)
         epoch_start = time.perf_counter()
         train_stats = train_one_epoch(
