@@ -11,13 +11,13 @@ from __future__ import annotations
 
 import argparse
 import math
+import time
 from pathlib import Path
-from types import SimpleNamespace
-from typing import Iterable, Tuple
 
 import torch
 import torch.nn.functional as F
-from torch.utils.data import DataLoader, Dataset, random_split
+from torch.utils.data import DataLoader
+from tqdm import tqdm
 
 try:
     import wandb
@@ -27,14 +27,15 @@ except Exception:
 from vit_prisma.sae.config import VisionModelSAERunnerConfig
 from vit_prisma.sae.sae import StandardSparseAutoencoder
 
-# MODELS = [
-#     "croma_base",
-#     "dino_v3_dinov3_vitb16",
-#     "galileo_tiny",
-#     "olmoearth_tiny",
-#     # "presto",
-# ]
-MODEL = "galileo_tiny"  
+from embedding_data import (
+    EmbeddingDataset,
+    MemmapBatchDataset,
+    accumulate_embeddings,
+    build_or_load_memmap,
+    collect_split_paths,
+    make_memmap_dataloader,
+)
+
 SEG_DATASETS = [
     "m_cashew_plant",
     "m_sa_crop_type",
@@ -61,105 +62,6 @@ CLS_DATASETS = [
     "nandi_sentinel1",
     "nandi_sentinel2",
 ]
-
-SPLITS = ["train", "valid", "test"]
-
-class EmbeddingDataset(Dataset):
-    def __init__(self, embeddings: torch.Tensor):
-        self.embeddings = embeddings.contiguous()
-
-    def __len__(self) -> int:
-        return self.embeddings.shape[0]
-
-    def __getitem__(self, idx: int) -> torch.Tensor:
-        return self.embeddings[idx]
-
-
-def load_embeddings(path: str, is_seg: bool, load_labels: bool = False) -> torch.Tensor:
-    """Load embeddings; drop labels immediately to avoid holding mask tensors in RAM."""
-    p = Path(path)
-    data = torch.load(p, map_location="cpu", weights_only=False)
-    emb = data["embeddings"]
-    labels = data["labels"] if load_labels else None
-    del data
-    if is_seg:
-        if emb.ndim <= 2:
-            raise ValueError(f"{p}: expected spatial embeddings for --seg, got {tuple(emb.shape)}")
-        emb = emb.reshape(-1, emb.shape[-1])
-    # One contiguous float32 copy; free original dtype/storage.
-    out = emb.float().contiguous()
-    del emb
-    if load_labels:
-        return out, labels
-    return out
-
-
-def collect_split_paths(
-    root: str,
-    model: str,
-    datasets: list[str],
-    split: str,
-    *,
-    seg: bool,
-) -> tuple[list[str], list[tuple[int, int]]]:
-    """Return existing paths and flat (n_rows, d_in) by loading each file once for shape."""
-    paths: list[str] = []
-    shapes: list[tuple[int, int]] = []
-    for dataset in datasets:
-        path = f"{root}/{model}/{dataset}/{split}.pt"
-        if not Path(path).exists():
-            print(f"skip missing {path}")
-            continue
-        data = torch.load(path, map_location="cpu", weights_only=False)
-        emb = data["embeddings"]
-        del data
-        spatial = emb.ndim > 2
-        if seg and not spatial:
-            del emb
-            continue
-        if not seg and spatial:
-            del emb
-            continue
-        if seg:
-            n, d = emb.shape[0] * emb.shape[1] * emb.shape[2], int(emb.shape[-1])
-        else:
-            n, d = int(emb.shape[0]), int(emb.shape[1])
-        del emb
-        paths.append(path)
-        shapes.append((n, d))
-    return paths, shapes
-
-
-def accumulate_embeddings(
-    paths: list[str],
-    shapes: list[tuple[int, int]],
-    *,
-    is_seg: bool,
-) -> torch.Tensor:
-    """Load datasets one-by-one into a single preallocated tensor (low peak RAM).
-
-    Peak ≈ final tensor + one dataset chunk (not a list of all chunks + cat).
-    """
-    n_total = sum(n for n, _ in shapes)
-    d_in = shapes[0][1]
-    print(
-        f"  preallocating ({n_total}, {d_in}) float32 "
-        f"({n_total * d_in * 4 / 1e9:.2f} GB)"
-    )
-    out = torch.empty((n_total, d_in), dtype=torch.float32)
-    offset = 0
-    for path, (n, _) in zip(paths, shapes):
-        emb = load_embeddings(path, is_seg=is_seg)
-        if emb.shape[0] != n or emb.shape[1] != d_in:
-            raise RuntimeError(
-                f"shape mismatch for {path}: got {tuple(emb.shape)}, expected {(n, d_in)}"
-            )
-        out[offset : offset + n].copy_(emb)
-        offset += n
-        del emb
-        print(f"  loaded {path} -> {n} rows ({offset}/{n_total})")
-
-    return out
 
 
 def build_config(
@@ -228,19 +130,50 @@ def dead_feature_fraction(feature_acts: torch.Tensor, threshold: float = 1e-8) -
     return (mean_abs <= threshold).float().mean()
 
 
+def _sync_device(device: torch.device) -> None:
+    if device.type == "cuda":
+        torch.cuda.synchronize()
+
+
+def _format_duration(seconds: float) -> str:
+    if seconds < 60:
+        return f"{seconds:.1f}s"
+    minutes, secs = divmod(seconds, 60)
+    if minutes < 60:
+        return f"{int(minutes)}m{secs:.0f}s"
+    hours, minutes = divmod(minutes, 60)
+    return f"{int(hours)}h{int(minutes)}m"
+
+
+def _step_iterator(loader: DataLoader, *, desc: str, show_progress: bool):
+    if show_progress:
+        return tqdm(loader, desc=desc, unit="step", leave=False)
+    return loader
+
+
 def train_one_epoch(
     sae: StandardSparseAutoencoder,
     loader: DataLoader,
     opt: torch.optim.Optimizer,
     cfg: VisionModelSAERunnerConfig,
     device: torch.device,
+    *,
+    epoch: int,
+    show_progress: bool = False,
 ) -> dict:
     sae.train()
     totals = {"loss": 0.0, "mse": 0.0, "l1": 0.0, "cos": 0.0, "ev_mean": 0.0, "ev_std": 0.0, "l0": 0.0, "dead_frac": 0.0}
     n_batches = 0
+    data_sec = 0.0
+    gpu_sec = 0.0
+    end = time.perf_counter()
 
-    for x in loader:
-        x = x.to(device)
+    steps = _step_iterator(loader, desc=f"train epoch {epoch:03d}", show_progress=show_progress)
+    for x in steps:
+        data_sec += time.perf_counter() - end
+
+        gpu_start = time.perf_counter()
+        x = x.to(device, non_blocking=(device.type == "cuda"))
         recon, feat, loss, mse, l1, ghost, aux = sae(x)
         opt.zero_grad(set_to_none=True)
         loss.backward()
@@ -248,6 +181,8 @@ def train_one_epoch(
             torch.nn.utils.clip_grad_norm_(sae.parameters(), cfg.max_grad_norm)
         opt.step()
         sae.set_decoder_norm_to_unit_norm()
+        _sync_device(device)
+        gpu_sec += time.perf_counter() - gpu_start
 
         totals["loss"] += loss.item()
         totals["mse"] += mse.item()
@@ -258,19 +193,44 @@ def train_one_epoch(
         totals["l0"] += l0_sparsity(feat).item()
         totals["dead_frac"] += dead_feature_fraction(feat, cfg.dead_feature_threshold).item()
         n_batches += 1
+        end = time.perf_counter()
+        if show_progress:
+            steps.set_postfix(loss=f"{loss.item():.4f}", mse=f"{mse.item():.4f}")
 
-    return {k: v / max(n_batches, 1) for k, v in totals.items()}
+    stats = {k: v / max(n_batches, 1) for k, v in totals.items()}
+    stats["data_sec"] = data_sec
+    stats["gpu_sec"] = gpu_sec
+    stats["total_sec"] = data_sec + gpu_sec
+    return stats
 
 
 @torch.no_grad()
-def evaluate(sae: StandardSparseAutoencoder, loader: DataLoader, cfg: VisionModelSAERunnerConfig, device: torch.device) -> dict:
+def evaluate(
+    sae: StandardSparseAutoencoder,
+    loader: DataLoader,
+    cfg: VisionModelSAERunnerConfig,
+    device: torch.device,
+    *,
+    epoch: int,
+    show_progress: bool = False,
+) -> dict:
     sae.eval()
     totals = {"loss": 0.0, "mse": 0.0, "l1": 0.0, "cos": 0.0, "ev_mean": 0.0, "ev_std": 0.0, "l0": 0.0, "dead_frac": 0.0}
     n_batches = 0
+    data_sec = 0.0
+    gpu_sec = 0.0
+    end = time.perf_counter()
 
-    for x in loader:
-        x = x.to(device)
+    steps = _step_iterator(loader, desc=f"val epoch {epoch:03d}", show_progress=show_progress)
+    for x in steps:
+        data_sec += time.perf_counter() - end
+
+        gpu_start = time.perf_counter()
+        x = x.to(device, non_blocking=(device.type == "cuda"))
         recon, feat, loss, mse, l1, ghost, aux = sae(x)
+        _sync_device(device)
+        gpu_sec += time.perf_counter() - gpu_start
+
         totals["loss"] += loss.item()
         totals["mse"] += mse.item()
         totals["l1"] += l1.item()
@@ -280,31 +240,50 @@ def evaluate(sae: StandardSparseAutoencoder, loader: DataLoader, cfg: VisionMode
         totals["l0"] += l0_sparsity(feat).item()
         totals["dead_frac"] += dead_feature_fraction(feat, cfg.dead_feature_threshold).item()
         n_batches += 1
+        end = time.perf_counter()
+        if show_progress:
+            steps.set_postfix(loss=f"{loss.item():.4f}", mse=f"{mse.item():.4f}")
 
-    return {k: v / max(n_batches, 1) for k, v in totals.items()}
+    stats = {k: v / max(n_batches, 1) for k, v in totals.items()}
+    stats["data_sec"] = data_sec
+    stats["gpu_sec"] = gpu_sec
+    stats["total_sec"] = data_sec + gpu_sec
+    return stats
 
 
 def main() -> None:
     parser = argparse.ArgumentParser()
-    # parser.add_argument("--embeddings", default='/scratch/akaur64/olmo-embeddings/galileo_tiny/m_eurosat/train.pt', help="Path to cached embeddings (.pt or .npy)")
     parser.add_argument("--output", type=str, required=True)
     parser.add_argument("--root", type=str, required=True)
+    parser.add_argument("--model", type=str, required=True)
     parser.add_argument("--expansion-factor", type=int, default=8)
     parser.add_argument("--batch-size", type=int, default=256)
     parser.add_argument("--epochs", type=int, default=500)
     parser.add_argument("--lr", type=float, default=1e-3)
     parser.add_argument("--l1", type=float, default=1e-4)
-    parser.add_argument("--num-workers", type=int, default=8)
+    parser.add_argument("--num-workers", type=int, default=8, help="DataLoader workers (CLS/in-RAM only; memmap uses 0)")
     parser.add_argument("--wandb-project", default="prisma-sae-embeddings")
     parser.add_argument("--wandb-entity", default='akaur64-arizona-state-university')
     parser.add_argument("--no-wandb", action="store_true")
     parser.add_argument("--seg", action="store_true")
+    parser.add_argument(
+        "--progress",
+        action="store_true",
+        help="Show per-step tqdm bars during train/val (off by default; useful for interactive runs).",
+    )
+    parser.add_argument(
+        "--memmap-dir",
+        type=str,
+        default=None,
+        help="Directory for train.npy/valid.npy memmaps (default: <output>/<model>_<seg|cls>).",
+    )
     args = parser.parse_args()
 
+    run_name = f"{args.model}_{'seg' if args.seg else 'cls'}"
+    output = f"{args.output}/{run_name}.pt"
     torch.manual_seed(42)
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     pin_memory = device.type == "cuda"
-    # DataLoader workers: avoid persistent_workers with 0 workers.
     loader_workers = max(args.num_workers, 0)
     loader_kwargs = dict(
         num_workers=loader_workers,
@@ -315,45 +294,82 @@ def main() -> None:
     datasets = SEG_DATASETS if args.seg else CLS_DATASETS
     print(f"Collecting {'spatial' if args.seg else 'CLS'} embedding paths...")
     train_paths, train_shapes = collect_split_paths(
-        args.root, MODEL, datasets, "train", seg=args.seg
+        args.root, args.model, datasets, "train", seg=args.seg
     )
     val_paths, val_shapes = collect_split_paths(
-        args.root, MODEL, datasets, "valid", seg=args.seg
+        args.root, args.model, datasets, "valid", seg=args.seg
     )
     if not train_paths:
         raise RuntimeError("no train embeddings matched --seg / CLS filter")
-    print(f"Loading train ({len(train_paths)} files) sequentially...")
-    train_embeddings = accumulate_embeddings(
-        train_paths, train_shapes, is_seg=args.seg
-    )
-    print(f"Loading val ({len(val_paths)} files) sequentially...")
-    val_embeddings = accumulate_embeddings(
-        val_paths, val_shapes, is_seg=args.seg
-    )
 
-    DIM_IN = train_embeddings.shape[-1]
-    N_TRAIN = train_embeddings.shape[0]
-    N_VAL = val_embeddings.shape[0]
+    use_memmap = args.seg
+    if use_memmap:
+        memmap_dir = Path(args.memmap_dir or f"{args.output}/{run_name}")
+        print(f"Building/loading train memmap under {memmap_dir}...")
+        train_memmap = build_or_load_memmap(
+            memmap_dir,
+            "train",
+            train_paths,
+            train_shapes,
+            is_seg=args.seg,
+            model=args.model,
+        )
+        print(f"Building/loading val memmap under {memmap_dir}...")
+        val_memmap = build_or_load_memmap(
+            memmap_dir,
+            "valid",
+            val_paths,
+            val_shapes,
+            is_seg=args.seg,
+            model=args.model,
+        )
+        DIM_IN = train_memmap.shape[1]
+        N_TRAIN = train_memmap.shape[0]
+        N_VAL = val_memmap.shape[0]
+        train_dataset = MemmapBatchDataset(
+            train_memmap.path,
+            args.batch_size,
+            shuffle=True,
+            drop_last=True,
+        )
+        val_dataset = MemmapBatchDataset(
+            val_memmap.path,
+            args.batch_size,
+            shuffle=False,
+            drop_last=False,
+        )
+        train_loader = make_memmap_dataloader(train_dataset, pin_memory=pin_memory)
+        val_loader = make_memmap_dataloader(val_dataset, pin_memory=pin_memory)
+    else:
+        print(f"Loading train ({len(train_paths)} files) sequentially into RAM...")
+        train_embeddings = accumulate_embeddings(
+            train_paths, train_shapes, is_seg=args.seg
+        )
+        print(f"Loading val ({len(val_paths)} files) sequentially into RAM...")
+        val_embeddings = accumulate_embeddings(
+            val_paths, val_shapes, is_seg=args.seg
+        )
+        DIM_IN = train_embeddings.shape[-1]
+        N_TRAIN = train_embeddings.shape[0]
+        N_VAL = val_embeddings.shape[0]
+        train_dataset = EmbeddingDataset(train_embeddings)
+        val_dataset = EmbeddingDataset(val_embeddings)
+        del train_embeddings, val_embeddings
 
-    train_dataset = EmbeddingDataset(train_embeddings)
-    val_dataset = EmbeddingDataset(val_embeddings)
-    # Dataset holds the only reference; drop locals after wrap.
-    del train_embeddings, val_embeddings
-
-    train_loader = DataLoader(
-        train_dataset,
-        batch_size=args.batch_size,
-        shuffle=True,
-        drop_last=True,
-        **loader_kwargs,
-    )
-    val_loader = DataLoader(
-        val_dataset,
-        batch_size=args.batch_size,
-        shuffle=False,
-        drop_last=False,
-        **loader_kwargs,
-    )
+        train_loader = DataLoader(
+            train_dataset,
+            batch_size=args.batch_size,
+            shuffle=True,
+            drop_last=True,
+            **loader_kwargs,
+        )
+        val_loader = DataLoader(
+            val_dataset,
+            batch_size=args.batch_size,
+            shuffle=False,
+            drop_last=False,
+            **loader_kwargs,
+        )
 
     cfg = build_config(
         d_in=DIM_IN,
@@ -362,7 +378,7 @@ def main() -> None:
         log_to_wandb=not args.no_wandb,
         wandb_project=args.wandb_project,
         wandb_entity=args.wandb_entity,
-        checkpoint_path=str(Path(args.output).parent),
+        checkpoint_path=str(Path(output).parent),
     )
     cfg.train_batch_size = args.batch_size
     cfg.num_epochs = args.epochs
@@ -380,10 +396,10 @@ def main() -> None:
     print("Our hyperparameters:")
     hyperparams = {
         "root": args.root,
-        "model": MODEL,
+        "model": args.model,
         "datasets": datasets,
         "device": str(device),
-        "output": args.output,
+        "output": output,
         "d_in": cfg.d_in,
         "d_sae": cfg.d_sae,
         "expansion_factor": cfg.expansion_factor,
@@ -405,7 +421,8 @@ def main() -> None:
         "wandb_entity": cfg.wandb_entity,
         "n_train": N_TRAIN,
         "n_val": N_VAL,
-        # "n_test": test_embeddings.shape[0],
+        "use_memmap": use_memmap,
+        "memmap_num_workers": 0 if use_memmap else loader_workers,
         "steps_per_epoch": len(train_loader),
         "total_train_steps": len(train_loader) * cfg.num_epochs,
     }
@@ -429,13 +446,25 @@ def main() -> None:
 
     best_val = math.inf
     for epoch in range(cfg.num_epochs):
-        train_stats = train_one_epoch(sae, train_loader, opt, cfg, device)
-        val_stats = evaluate(sae, val_loader, cfg, device)
+        if use_memmap:
+            train_loader.dataset.set_epoch(epoch)
+        epoch_start = time.perf_counter()
+        train_stats = train_one_epoch(
+            sae, train_loader, opt, cfg, device, epoch=epoch, show_progress=args.progress
+        )
+        val_stats = evaluate(
+            sae, val_loader, cfg, device, epoch=epoch, show_progress=args.progress
+        )
+        epoch_sec = time.perf_counter() - epoch_start
 
         print(
             f"epoch={epoch:03d} "
             f"train_loss={train_stats['loss']:.6f} val_loss={val_stats['loss']:.6f} "
-            f"val_cos={val_stats['cos']:.4f} val_ev_mean={val_stats['ev_mean']:.4f} val_ev_std={val_stats['ev_std']:.4f} val_l0={val_stats['l0']:.1f} val_dead_frac={val_stats['dead_frac']:.4f}"
+            f"val_cos={val_stats['cos']:.4f} val_ev_mean={val_stats['ev_mean']:.4f} val_ev_std={val_stats['ev_std']:.4f} val_l0={val_stats['l0']:.1f} val_dead_frac={val_stats['dead_frac']:.4f} "
+            f"train_data={_format_duration(train_stats['data_sec'])} train_gpu={_format_duration(train_stats['gpu_sec'])} "
+            f"val_data={_format_duration(val_stats['data_sec'])} val_gpu={_format_duration(val_stats['gpu_sec'])} "
+            f"epoch_total={_format_duration(epoch_sec)}",
+            flush=True,
         )
 
         if run is not None:
@@ -449,6 +478,8 @@ def main() -> None:
                 "train/explained_variance_std": train_stats["ev_std"],
                 "train/dead_feature_fraction": train_stats["dead_frac"],
                 "train/l0": train_stats["l0"],
+                "train/data_sec": train_stats["data_sec"],
+                "train/gpu_sec": train_stats["gpu_sec"],
                 "val/loss": val_stats["loss"],
                 "val/mse": val_stats["mse"],
                 "val/l1": val_stats["l1"],
@@ -457,17 +488,20 @@ def main() -> None:
                 "val/explained_variance_std": val_stats["ev_std"],
                 "val/l0": val_stats["l0"],
                 "val/dead_feature_fraction": val_stats["dead_frac"],
+                "val/data_sec": val_stats["data_sec"],
+                "val/gpu_sec": val_stats["gpu_sec"],
+                "epoch/total_sec": epoch_sec,
             })
 
         if val_stats["loss"] < best_val:
             best_val = val_stats["loss"]
-            Path(args.output).parent.mkdir(parents=True, exist_ok=True)
-            sae.save_model(args.output)
+            Path(output).parent.mkdir(parents=True, exist_ok=True)
+            sae.save_model(output)
 
     if run is not None:
         run.finish()
 
-    print(f"best checkpoint saved to {args.output}")
+    print(f"best checkpoint saved to {output}")
 
 
 if __name__ == "__main__":
