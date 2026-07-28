@@ -271,6 +271,7 @@ def main() -> None:
     parser.add_argument("--wandb-entity", default='akaur64-arizona-state-university')
     parser.add_argument("--no-wandb", action="store_true")
     parser.add_argument("--seg", action="store_true")
+    parser.add_argument("--use-memmap", type=str, default=False)
     parser.add_argument(
         "--progress",
         action="store_true",
@@ -307,8 +308,7 @@ def main() -> None:
     if not train_paths:
         raise RuntimeError("no train embeddings matched --seg / CLS filter")
 
-    use_memmap = args.seg
-    if use_memmap:
+    if args.use_memmap:
         memmap_dir = Path(args.memmap_dir or f"{args.output}/{run_name}")
         print(f"Building/loading train memmap under {memmap_dir}...")
         train_memmap = build_or_load_memmap(
