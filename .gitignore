@@ -1,7 +1,9 @@
 # Local-only (keep on this machine, not on GitHub / other server)
 view_sae.py
+viewer_sae.sh
 plot_sae.py
 trainer.sh
+trainer_cpu.sh
 train.sh
 
 # Runtime / outputs

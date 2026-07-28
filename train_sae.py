@@ -34,8 +34,17 @@ from vit_prisma.sae.sae import StandardSparseAutoencoder
 #     "olmoearth_tiny",
 #     # "presto",
 # ]
-MODEL = "galileo_tiny"
-DATASETS = [
+MODEL = "galileo_tiny"  
+SEG_DATASETS = [
+    "m_cashew_plant",
+    "m_sa_crop_type",
+    "mados",
+    "pastis_sentinel1",
+    "pastis_sentinel1_sentinel2",
+    "pastis_sentinel2",
+    "sen1floods11",
+]
+CLS_DATASETS = [
     "awf_sentinel1",
     "awf_sentinel2",
     "breizhcrops",
@@ -47,17 +56,10 @@ DATASETS = [
     "cropharvest_Togo_12_sentinel2_sentinel1",
     "m_bigearthnet",
     "m_brick_kiln",
-    "m_cashew_plant",
     "m_eurosat",
-    "m_sa_crop_type",
     "m_so2sat",
-    "mados",
     "nandi_sentinel1",
     "nandi_sentinel2",
-    "pastis_sentinel1",
-    "pastis_sentinel1_sentinel2",
-    "pastis_sentinel2",
-    "sen1floods11",
 ]
 
 SPLITS = ["train", "valid", "test"]
@@ -74,15 +76,90 @@ class EmbeddingDataset(Dataset):
 
 
 def load_embeddings(path: str, is_seg: bool, load_labels: bool = False) -> torch.Tensor:
+    """Load embeddings; drop labels immediately to avoid holding mask tensors in RAM."""
     p = Path(path)
     data = torch.load(p, map_location="cpu", weights_only=False)
+    emb = data["embeddings"]
+    labels = data["labels"] if load_labels else None
+    del data
     if is_seg:
-        data['embeddings'] = data['embeddings'].reshape(-1, data['embeddings'].shape[-1])
+        if emb.ndim <= 2:
+            raise ValueError(f"{p}: expected spatial embeddings for --seg, got {tuple(emb.shape)}")
+        emb = emb.reshape(-1, emb.shape[-1])
+    # One contiguous float32 copy; free original dtype/storage.
+    out = emb.float().contiguous()
+    del emb
     if load_labels:
-        return data["embeddings"].float(), data["labels"]
-    else:
-        return data["embeddings"].float()
+        return out, labels
+    return out
 
+
+def collect_split_paths(
+    root: str,
+    model: str,
+    datasets: list[str],
+    split: str,
+    *,
+    seg: bool,
+) -> tuple[list[str], list[tuple[int, int]]]:
+    """Return existing paths and flat (n_rows, d_in) by loading each file once for shape."""
+    paths: list[str] = []
+    shapes: list[tuple[int, int]] = []
+    for dataset in datasets:
+        path = f"{root}/{model}/{dataset}/{split}.pt"
+        if not Path(path).exists():
+            print(f"skip missing {path}")
+            continue
+        data = torch.load(path, map_location="cpu", weights_only=False)
+        emb = data["embeddings"]
+        del data
+        spatial = emb.ndim > 2
+        if seg and not spatial:
+            del emb
+            continue
+        if not seg and spatial:
+            del emb
+            continue
+        if seg:
+            n, d = emb.shape[0] * emb.shape[1] * emb.shape[2], int(emb.shape[-1])
+        else:
+            n, d = int(emb.shape[0]), int(emb.shape[1])
+        del emb
+        paths.append(path)
+        shapes.append((n, d))
+    return paths, shapes
+
+
+def accumulate_embeddings(
+    paths: list[str],
+    shapes: list[tuple[int, int]],
+    *,
+    is_seg: bool,
+) -> torch.Tensor:
+    """Load datasets one-by-one into a single preallocated tensor (low peak RAM).
+
+    Peak ≈ final tensor + one dataset chunk (not a list of all chunks + cat).
+    """
+    n_total = sum(n for n, _ in shapes)
+    d_in = shapes[0][1]
+    print(
+        f"  preallocating ({n_total}, {d_in}) float32 "
+        f"({n_total * d_in * 4 / 1e9:.2f} GB)"
+    )
+    out = torch.empty((n_total, d_in), dtype=torch.float32)
+    offset = 0
+    for path, (n, _) in zip(paths, shapes):
+        emb = load_embeddings(path, is_seg=is_seg)
+        if emb.shape[0] != n or emb.shape[1] != d_in:
+            raise RuntimeError(
+                f"shape mismatch for {path}: got {tuple(emb.shape)}, expected {(n, d_in)}"
+            )
+        out[offset : offset + n].copy_(emb)
+        offset += n
+        del emb
+        print(f"  loaded {path} -> {n} rows ({offset}/{n_total})")
+
+    return out
 
 
 def build_config(
@@ -165,13 +242,6 @@ def train_one_epoch(
     for x in loader:
         x = x.to(device)
         recon, feat, loss, mse, l1, ghost, aux = sae(x)
-        # _, feat, hidden_pre = sae.encode(x, return_hidden_pre=True)
-        # recon = sae.decode(feat)
-
-        # mse = F.mse_loss(recon, x)
-        # l1 = feat.abs().mean()
-        # loss = mse + cfg.l1_coefficient * l1
-
         opt.zero_grad(set_to_none=True)
         loss.backward()
         if getattr(cfg, "max_grad_norm", None):
@@ -201,13 +271,6 @@ def evaluate(sae: StandardSparseAutoencoder, loader: DataLoader, cfg: VisionMode
     for x in loader:
         x = x.to(device)
         recon, feat, loss, mse, l1, ghost, aux = sae(x)
-        # _, feat, hidden_pre = sae.encode(x, return_hidden_pre=True)
-        # recon = sae.decode(feat)
-
-        # mse = F.mse_loss(recon, x)
-        # l1 = feat.abs().mean()
-        # loss = mse + cfg.l1_coefficient * l1
-
         totals["loss"] += loss.item()
         totals["mse"] += mse.item()
         totals["l1"] += l1.item()
@@ -231,6 +294,7 @@ def main() -> None:
     parser.add_argument("--epochs", type=int, default=500)
     parser.add_argument("--lr", type=float, default=1e-3)
     parser.add_argument("--l1", type=float, default=1e-4)
+    parser.add_argument("--num-workers", type=int, default=8)
     parser.add_argument("--wandb-project", default="prisma-sae-embeddings")
     parser.add_argument("--wandb-entity", default='akaur64-arizona-state-university')
     parser.add_argument("--no-wandb", action="store_true")
@@ -239,42 +303,57 @@ def main() -> None:
 
     torch.manual_seed(42)
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    pin_memory = device.type == "cuda"
+    # DataLoader workers: avoid persistent_workers with 0 workers.
+    loader_workers = max(args.num_workers, 0)
+    loader_kwargs = dict(
+        num_workers=loader_workers,
+        pin_memory=pin_memory,
+        persistent_workers=loader_workers > 0,
+    )
 
-    train_embeddings = []
-    val_embeddings = []
-    test_embeddings = []
-    for dataset in DATASETS:
-        base_path = f"{args.root}/{MODEL}/{dataset}"
-        test_embed = load_embeddings(f"{base_path}/valid.pt", False)
-        if args.seg:
-            if len(test_embed.shape)<=2:
-                continue
-        else:
-            if len(test_embed.shape)>2:
-                continue
-        train_embeddings.append(load_embeddings(f"{base_path}/train.pt", args.seg))
-        val_embeddings.append(load_embeddings(f"{base_path}/valid.pt", args.seg))
-        # break
-        # test_embeddings.append(load_embeddings(f"{base_path}/test.pt", args.seg))
-
-    train_embeddings = torch.cat(train_embeddings, dim=0)
-    val_embeddings = torch.cat(val_embeddings, dim=0)
-    # test_embeddings = torch.cat(test_embeddings, dim=0)
-
-    train_loader = EmbeddingDataset(train_embeddings)
-    val_loader = EmbeddingDataset(val_embeddings)
+    datasets = SEG_DATASETS if args.seg else CLS_DATASETS
+    print(f"Collecting {'spatial' if args.seg else 'CLS'} embedding paths...")
+    train_paths, train_shapes = collect_split_paths(
+        args.root, MODEL, datasets, "train", seg=args.seg
+    )
+    val_paths, val_shapes = collect_split_paths(
+        args.root, MODEL, datasets, "valid", seg=args.seg
+    )
+    if not train_paths:
+        raise RuntimeError("no train embeddings matched --seg / CLS filter")
+    print(f"Loading train ({len(train_paths)} files) sequentially...")
+    train_embeddings = accumulate_embeddings(
+        train_paths, train_shapes, is_seg=args.seg
+    )
+    print(f"Loading val ({len(val_paths)} files) sequentially...")
+    val_embeddings = accumulate_embeddings(
+        val_paths, val_shapes, is_seg=args.seg
+    )
 
     DIM_IN = train_embeddings.shape[-1]
     N_TRAIN = train_embeddings.shape[0]
     N_VAL = val_embeddings.shape[0]
-    # delete train_embeddings from memory
-    del train_embeddings
-    del val_embeddings
-    # test_dataset = EmbeddingDataset(test_embeddings)
 
-    train_loader = DataLoader(train_loader, batch_size=args.batch_size, num_workers=8, shuffle=True, drop_last=True, pin_memory=True)
-    val_loader = DataLoader(val_loader, batch_size=args.batch_size, num_workers=8, shuffle=False, drop_last=False, pin_memory=True)
-    # test_loader = DataLoader(test_dataset, batch_size=args.batch_size, shuffle=False, drop_last=False)
+    train_dataset = EmbeddingDataset(train_embeddings)
+    val_dataset = EmbeddingDataset(val_embeddings)
+    # Dataset holds the only reference; drop locals after wrap.
+    del train_embeddings, val_embeddings
+
+    train_loader = DataLoader(
+        train_dataset,
+        batch_size=args.batch_size,
+        shuffle=True,
+        drop_last=True,
+        **loader_kwargs,
+    )
+    val_loader = DataLoader(
+        val_dataset,
+        batch_size=args.batch_size,
+        shuffle=False,
+        drop_last=False,
+        **loader_kwargs,
+    )
 
     cfg = build_config(
         d_in=DIM_IN,
@@ -302,7 +381,7 @@ def main() -> None:
     hyperparams = {
         "root": args.root,
         "model": MODEL,
-        "datasets": DATASETS,
+        "datasets": datasets,
         "device": str(device),
         "output": args.output,
         "d_in": cfg.d_in,
