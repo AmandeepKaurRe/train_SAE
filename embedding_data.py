@@ -92,16 +92,26 @@ class MemmapBatchDataset(Dataset):
         return torch.from_numpy(np.asarray(self._arr[start:stop], dtype=np.float32).copy())
 
 
-def make_memmap_dataloader(dataset: MemmapBatchDataset, *, pin_memory: bool) -> DataLoader:
-    """Memmap batches are read in the main process (num_workers=0)."""
-    return DataLoader(
-        dataset,
-        batch_size=1,
-        shuffle=False,
-        collate_fn=lambda batch: batch[0],
-        num_workers=0,
-        pin_memory=pin_memory,
-    )
+def make_memmap_dataloader(
+    dataset: MemmapBatchDataset,
+    *,
+    num_workers: int,
+    pin_memory: bool,
+) -> DataLoader:
+    loader_workers = max(num_workers, 0)
+    kwargs: dict = {
+        "batch_size": 1,
+        "shuffle": False,
+        "collate_fn": lambda batch: batch[0],
+        "num_workers": loader_workers,
+        "pin_memory": pin_memory,
+        # Workers fork a copy of the dataset; disable persistence so set_epoch()
+        # on the main process is picked up when a new iterator starts each epoch.
+        "persistent_workers": False,
+    }
+    if loader_workers > 0:
+        kwargs["prefetch_factor"] = 2
+    return DataLoader(dataset, **kwargs)
 
 
 def load_embeddings(path: str, is_seg: bool) -> torch.Tensor:

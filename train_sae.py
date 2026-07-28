@@ -261,7 +261,12 @@ def main() -> None:
     parser.add_argument("--epochs", type=int, default=500)
     parser.add_argument("--lr", type=float, default=1e-3)
     parser.add_argument("--l1", type=float, default=1e-4)
-    parser.add_argument("--num-workers", type=int, default=8, help="DataLoader workers (CLS/in-RAM only; memmap uses 0)")
+    parser.add_argument(
+        "--num-workers",
+        type=int,
+        default=8,
+        help="DataLoader worker processes for batch prefetch (memmap and in-RAM).",
+    )
     parser.add_argument("--wandb-project", default="prisma-sae-embeddings")
     parser.add_argument("--wandb-entity", default='akaur64-arizona-state-university')
     parser.add_argument("--no-wandb", action="store_true")
@@ -338,8 +343,12 @@ def main() -> None:
             shuffle=False,
             drop_last=False,
         )
-        train_loader = make_memmap_dataloader(train_dataset, pin_memory=pin_memory)
-        val_loader = make_memmap_dataloader(val_dataset, pin_memory=pin_memory)
+        train_loader = make_memmap_dataloader(
+            train_dataset, num_workers=args.num_workers, pin_memory=pin_memory
+        )
+        val_loader = make_memmap_dataloader(
+            val_dataset, num_workers=args.num_workers, pin_memory=pin_memory
+        )
     else:
         print(f"Loading train ({len(train_paths)} files) sequentially into RAM...")
         train_embeddings = accumulate_embeddings(
@@ -422,7 +431,7 @@ def main() -> None:
         "n_train": N_TRAIN,
         "n_val": N_VAL,
         "use_memmap": use_memmap,
-        "memmap_num_workers": 0 if use_memmap else loader_workers,
+        "num_workers": loader_workers,
         "steps_per_epoch": len(train_loader),
         "total_train_steps": len(train_loader) * cfg.num_epochs,
     }
